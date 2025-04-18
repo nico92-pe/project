@@ -2,20 +2,15 @@
 
 import { useState } from 'react';
 
-type QRCodeOptions = {
-  format: 'png' | 'jpeg';
-  size: number;
-};
-
 export function useQRCode() {
-  const [url, setUrl] = useState<string>('');
-  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
 
-  const generateQRCode = async (inputUrl: string, options: QRCodeOptions = { format: 'png', size: 300 }) => {
+  const generateQRCode = async (inputUrl: string) => {
     if (!inputUrl) {
-      setError('Please enter a URL');
+      setError('Please enter a valid URL');
       return;
     }
 
@@ -23,56 +18,71 @@ export function useQRCode() {
       setIsGenerating(true);
       setError(null);
       
-      // Using the Google Charts API to generate QR codes
-      const encodedUrl = encodeURIComponent(inputUrl);
-      const qrUrl = `https://chart.googleapis.com/chart?cht=qr&chl=${encodedUrl}&chs=${options.size}x${options.size}&choe=UTF-8`;
+      // Validate URL format
+      let validUrl = inputUrl;
+      if (!/^https?:\/\//i.test(inputUrl)) {
+        validUrl = 'https://' + inputUrl;
+      }
       
-      setQrCodeUrl(qrUrl);
-      setUrl(inputUrl);
+      // Using QR Server API instead of Google Charts
+      // This service has better CORS support
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(validUrl)}`;
+      
+      // Create a test image to verify the URL works
+      const testImage = new Image();
+      testImage.crossOrigin = 'Anonymous';
+      
+      testImage.onload = () => {
+        setQrCodeUrl(qrUrl);
+        setOriginalUrl(validUrl);
+        setIsGenerating(false);
+      };
+      
+      testImage.onerror = () => {
+        console.error('Failed to load QR code image');
+        setError('Failed to generate QR code. Please try again.');
+        setIsGenerating(false);
+      };
+      
+      testImage.src = qrUrl;
+      
     } catch (err) {
-      setError('Failed to generate QR code');
       console.error('Error generating QR code:', err);
-    } finally {
+      setError('Failed to generate QR code. Please try again.');
       setIsGenerating(false);
     }
   };
 
-  const downloadQRCode = (format: 'png' | 'jpeg') => {
-    if (!qrCodeUrl) return;
+  const downloadQRCode = async (format: 'png' | 'jpeg' = 'png') => {
+    if (!qrCodeUrl || !originalUrl) return;
 
-    // Create a canvas to convert the image if needed
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    const image = new Image();
-    
-    image.crossOrigin = 'Anonymous';
-    image.onload = () => {
-      canvas.width = image.width;
-      canvas.height = image.height;
-      context?.drawImage(image, 0, 0);
+    try {
+      // Create a format-specific API URL
+      const downloadUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&format=${format}&data=${encodeURIComponent(originalUrl)}`;
       
-      // Get the data URL with the correct format
-      const dataUrl = canvas.toDataURL(`image/${format}`);
+      // Fetch the image
+      const response = await fetch(downloadUrl);
+      const blob = await response.blob();
       
-      // Create a download link and trigger it
+      // Create a temporary download link
       const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
       link.download = `qrcode-${new Date().getTime()}.${format}`;
-      link.href = dataUrl;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    };
-    
-    image.src = qrCodeUrl;
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      console.error('Error downloading QR code:', err);
+      setError(`Failed to download QR code as ${format.toUpperCase()}. Please try again.`);
+    }
   };
 
   return {
-    url,
-    setUrl,
     qrCodeUrl,
     isGenerating,
     error,
     generateQRCode,
-    downloadQRCode,
+    downloadQRCode
   };
 }
